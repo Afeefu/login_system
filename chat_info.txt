@@ -1,0 +1,521 @@
+
+
+To integrate Firebase Authentication and Firestore with your existing Flutter app that uses Hive for local storage, follow these steps:
+
+1. **Set Up Firebase in Your Flutter Project**:
+   - Go to the Firebase Console and create a new project.
+   - Add your Flutter app to the Firebase project by following the instructions to download the `google-services.json` file for Android and `GoogleService-Info.plist` for iOS.
+   - Place these files in the appropriate directories in your Flutter project.
+
+2. **Add Firebase Dependencies**:
+   - Update your `pubspec.yaml` file to include the necessary Firebase packages:
+     ```yaml
+     dependencies:
+       flutter:
+         sdk: flutter
+       firebase_core: latest_version
+       firebase_auth: latest_version
+       cloud_firestore: latest_version
+     ```
+   - Run `flutter pub get` to install the packages.
+
+3. **Initialize Firebase**:
+   - Initialize Firebase in your `main.dart` file before running the app:
+     ```dart
+     void main() async {
+       WidgetsFlutterBinding.ensureInitialized();
+       await Firebase.initializeApp();
+       await Hive.initFlutter();
+       Hive.registerAdapter(TodoAdapter());
+       await Hive.openBox<Todo>("todo");
+       runApp(const MyApp());
+     }
+     ```
+
+4. **Implement Firebase Authentication**:
+   - Create a login screen where users can sign in or register using Firebase Authentication.
+   - Use `FirebaseAuth` to handle user authentication:
+     ```dart
+     FirebaseAuth auth = FirebaseAuth.instance;
+
+     Future<void> signIn(String email, String password) async {
+       try {
+         UserCredential userCredential = await auth.signInWithEmailAndPassword(
+           email: email,
+           password: password,
+         );
+         // Handle successful sign-in
+       } on FirebaseAuthException catch (e) {
+         // Handle sign-in error
+       }
+     }
+     ```
+
+5. **Upload Tasks to Firestore**:
+   - Create a function to upload tasks from Hive to Firestore:
+     ```dart
+     Future<void> uploadTasksToFirestore() async {
+       final box = Hive.box<Todo>("todo");
+       final firestore = FirebaseFirestore.instance;
+       final user = FirebaseAuth.instance.currentUser;
+
+       if (user != null) {
+         for (var task in box.values) {
+           await firestore.collection('users').doc(user.uid).collection('tasks').add({
+             'title': task.title,
+             'description': task.description,
+             'dateTime': task.dateTime.toIso8601String(),
+             'isCompleted': task.isCompleted,
+           });
+         }
+       }
+     }
+     ```
+
+6. **Sync Data**:
+   - Decide when to sync data between Hive and Firestore (e.g., on app start, on user action).
+   - Ensure that you handle network connectivity issues and potential data conflicts.
+
+By following these steps, you can integrate Firebase Authentication for user login and Firestore to upload tasks from Hive to Firebase. Make sure to test the integration thoroughly to ensure data consistency and handle any potential errors.
+=======================================================================================================================
+
+To make the login optional and allow users to either use the app offline with local storage or log in to sync tasks with Firebase, you can modify the `main` function and the app's initialization logic. Here's how you can achieve this:
+
+1. **Modify the Main Function**:
+   - Add logic to check if the user is logged in and initialize Firebase if necessary.
+   - Use a conditional to determine whether to load tasks from Hive or Firebase.
+
+2. **Update the App Initialization**:
+   - Create a method to handle the initialization based on the user's login status.
+
+Here's how you can implement these changes:
+
+```dart
+import 'package:flutter/material.dart';
+import 'package:hive_flutter/hive_flutter.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Hive.initFlutter();
+  Hive.registerAdapter(TodoAdapter());
+  await Hive.openBox<Todo>("todo");
+
+  // Initialize Firebase
+  await Firebase.initializeApp();
+
+  // Check if the user is logged in
+  User? user = FirebaseAuth.instance.currentUser;
+
+  if (user != null) {
+    // User is logged in, load tasks from Firebase
+    await loadTasksFromFirebase(user);
+  } else {
+    // User is not logged in, use local storage
+    runApp(const MyApp());
+  }
+}
+
+Future<void> loadTasksFromFirebase(User user) async {
+  // Logic to load tasks from Firebase and populate Hive
+  // After loading tasks, run the app
+  runApp(const MyApp());
+}
+```
+
+### Explanation:
+
+- **Firebase Initialization**: Firebase is initialized at the start of the app to ensure that authentication and Firestore operations can be performed.
+
+- **User Check**: The app checks if a user is currently logged in using `FirebaseAuth.instance.currentUser`.
+
+- **Conditional Logic**: If a user is logged in, tasks are loaded from Firebase. Otherwise, the app runs using local storage with Hive.
+
+- **Load Tasks from Firebase**: Implement the `loadTasksFromFirebase` function to fetch tasks from Firestore and store them in Hive. This function should be called only if the user is logged in.
+
+This setup allows users to choose between using the app offline with local storage or logging in to sync tasks with Firebase.
+==========================================================================================================
+
+To handle connection loss while the user is logged in, you can implement a strategy that ensures data consistency and user experience. Here are some steps you can take:
+
+1. **Detect Network Connectivity**: Use a package like `connectivity_plus` to detect network changes and handle connectivity status.
+
+2. **Offline Data Handling**: When the connection is lost, continue to store tasks locally in Hive. Once the connection is restored, sync the local changes with Firebase.
+
+3. **Sync Mechanism**: Implement a mechanism to sync data between Hive and Firebase when the connection is restored.
+
+4. **User Feedback**: Provide feedback to the user about the connectivity status and data sync status.
+
+Here's how you can implement these steps:
+
+### Step 1: Add Dependencies
+Add the `connectivity_plus` package to your `pubspec.yaml`:
+
+```yaml
+dependencies:
+  flutter:
+    sdk: flutter
+  connectivity_plus: latest_version
+  hive_flutter: latest_version
+  firebase_core: latest_version
+  firebase_auth: latest_version
+  cloud_firestore: latest_version
+```
+
+### Step 2: Detect Network Connectivity
+
+```dart
+import 'package:connectivity_plus/connectivity_plus.dart';
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Hive.initFlutter();
+  Hive.registerAdapter(TodoAdapter());
+  await Hive.openBox<Todo>("todo");
+  await Firebase.initializeApp();
+
+  // Check initial connectivity status
+  var connectivityResult = await (Connectivity().checkConnectivity());
+  bool isConnected = connectivityResult != ConnectivityResult.none;
+
+  // Listen for connectivity changes
+  Connectivity().onConnectivityChanged.listen((ConnectivityResult result) {
+    isConnected = result != ConnectivityResult.none;
+    if (isConnected) {
+      syncLocalChangesToFirebase();
+    }
+  });
+
+  runApp(const MyApp());
+}
+```
+
+### Step 3: Implement Offline Data Handling and Sync Mechanism
+
+```dart
+Future<void> syncLocalChangesToFirebase() async {
+  final box = Hive.box<Todo>("todo");
+  final firestore = FirebaseFirestore.instance;
+  final user = FirebaseAuth.instance.currentUser;
+
+  if (user != null) {
+    for (var task in box.values) {
+      // Check if the task is already in Firestore
+      var taskRef = firestore.collection('users').doc(user.uid).collection('tasks').doc(task.id);
+      var taskSnapshot = await taskRef.get();
+
+      if (!taskSnapshot.exists) {
+        // Add new task to Firestore
+        await taskRef.set({
+          'title': task.title,
+          'description': task.description,
+          'dateTime': task.dateTime.toIso8601String(),
+          'isCompleted': task.isCompleted,
+        });
+      }
+    }
+  }
+}
+```
+
+### Step 4: Provide User Feedback
+
+- Use a `SnackBar` or a `Toast` to inform the user about connectivity status and when data is being synced.
+
+By implementing these steps, you can handle connection loss gracefully, ensuring that tasks are stored locally and synced with Firebase once the connection is restored. This approach provides a seamless user experience even in offline scenarios.
+========================================================================================================================
+
+To add notifications for tasks when it's their time, you can use the `flutter_local_notifications` package to schedule and display notifications. Here's how you can implement this feature and ensure it syncs with both local and Firebase tasks:
+
+### Step 1: Add Dependencies
+
+Add the `flutter_local_notifications` package to your `pubspec.yaml`:
+
+```yaml
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_local_notifications: latest_version
+  hive_flutter: latest_version
+  firebase_core: latest_version
+  firebase_auth: latest_version
+  cloud_firestore: latest_version
+```
+
+### Step 2: Initialize Notifications
+
+Initialize the `flutter_local_notifications` plugin in your `main.dart` file:
+
+```dart
+import 'package:flutter/material.dart';
+import 'package:hive_flutter/hive_flutter.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+
+final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
+    FlutterLocalNotificationsPlugin();
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Hive.initFlutter();
+  Hive.registerAdapter(TodoAdapter());
+  await Hive.openBox<Todo>("todo");
+  await Firebase.initializeApp();
+
+  // Initialize local notifications
+  const AndroidInitializationSettings initializationSettingsAndroid =
+      AndroidInitializationSettings('@mipmap/ic_launcher');
+  final InitializationSettings initializationSettings =
+      InitializationSettings(android: initializationSettingsAndroid);
+  await flutterLocalNotificationsPlugin.initialize(initializationSettings);
+
+  runApp(const MyApp());
+}
+```
+
+### Step 3: Schedule Notifications
+
+Create a function to schedule notifications for tasks:
+
+```dart
+Future<void> scheduleTaskNotification(Todo task) async {
+  final scheduledNotificationDateTime = task.dateTime;
+  const AndroidNotificationDetails androidPlatformChannelSpecifics =
+      AndroidNotificationDetails(
+    'your_channel_id',
+    'your_channel_name',
+    'your_channel_description',
+    importance: Importance.max,
+    priority: Priority.high,
+    showWhen: false,
+  );
+  const NotificationDetails platformChannelSpecifics =
+      NotificationDetails(android: androidPlatformChannelSpecifics);
+  await flutterLocalNotificationsPlugin.schedule(
+    task.hashCode, // Unique ID for each task
+    'Task Reminder',
+    'It\'s time for your task: ${task.title}',
+    scheduledNotificationDateTime,
+    platformChannelSpecifics,
+  );
+}
+```
+
+### Step 4: Sync Notifications with Local and Firebase Tasks
+
+- When a task is added or updated locally or in Firebase, schedule a notification for it.
+- Ensure that notifications are scheduled only for tasks that are not yet completed.
+
+```dart
+Future<void> syncTasksAndScheduleNotifications() async {
+  final box = Hive.box<Todo>("todo");
+  final firestore = FirebaseFirestore.instance;
+  final user = FirebaseAuth.instance.currentUser;
+
+  if (user != null) {
+    for (var task in box.values) {
+      // Sync task with Firebase
+      var taskRef = firestore.collection('users').doc(user.uid).collection('tasks').doc(task.id);
+      var taskSnapshot = await taskRef.get();
+
+      if (!taskSnapshot.exists) {
+        await taskRef.set({
+          'title': task.title,
+          'description': task.description,
+          'dateTime': task.dateTime.toIso8601String(),
+          'isCompleted': task.isCompleted,
+        });
+      }
+
+      // Schedule notification for the task
+      if (!task.isCompleted) {
+        await scheduleTaskNotification(task);
+      }
+    }
+  }
+}
+```
+
+### Step 5: Handle Task Completion
+
+- When a task is marked as completed, cancel the scheduled notification for that task.
+
+```dart
+Future<void> cancelTaskNotification(Todo task) async {
+  await flutterLocalNotificationsPlugin.cancel(task.hashCode);
+}
+```
+
+### Explanation:
+
+- **Notification Initialization**: The `flutter_local_notifications` plugin is initialized with Android-specific settings.
+- **Schedule Notifications**: Notifications are scheduled for each task based on its `dateTime`.
+- **Sync and Schedule**: Tasks are synced with Firebase, and notifications are scheduled for tasks that are not completed.
+- **Cancel Notifications**: Notifications are canceled when tasks are marked as completed.
+
+By following these steps, you can add notifications for tasks and ensure they are synced with both local and Firebase tasks. This setup provides timely reminders for users to complete their tasks.
+=======================================================
+
+To add a button for enabling/disabling notifications and a time picker to the alert dialog for adding tasks, you can modify the `_addTodoDialog` method in your `HomeScreen` class. Here's how you can implement these features:
+
+1. **Add a Button for Notifications**: Include a toggle button to enable or disable notifications for the task.
+
+2. **Add a Time Picker**: Use a `TimePicker` to allow the user to select the time they want to be notified.
+
+3. **Update the Task Addition Logic**: Store the notification preference and time in the task object.
+
+Here's how you can modify the `_addTodoDialog` method:
+
+```dart
+import 'package:flutter/material.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+
+class HomeScreen extends StatefulWidget {
+  const HomeScreen({super.key});
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  late Box<Todo> todoBox;
+  bool _enableNotification = false;
+  TimeOfDay _notificationTime = TimeOfDay.now();
+
+  @override
+  void initState() {
+    super.initState();
+    todoBox = Hive.box<Todo>("todo");
+  }
+
+  void _addTodoDialog(BuildContext context) {
+    TextEditingController _titleController = TextEditingController();
+    TextEditingController _descriptionController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text("اضف مهمة"),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: _titleController,
+              decoration: InputDecoration(labelText: "اسم المهمه"),
+            ),
+            TextField(
+              controller: _descriptionController,
+              decoration: InputDecoration(labelText: "الوصف"),
+            ),
+            Row(
+              children: [
+                Text("Enable Notification"),
+                Switch(
+                  value: _enableNotification,
+                  onChanged: (value) {
+                    setState(() {
+                      _enableNotification = value;
+                    });
+                  },
+                ),
+              ],
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                TimeOfDay? pickedTime = await showTimePicker(
+                  context: context,
+                  initialTime: _notificationTime,
+                );
+                if (pickedTime != null) {
+                  setState(() {
+                    _notificationTime = pickedTime;
+                  });
+                }
+              },
+              child: Text("Pick Notification Time"),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+            },
+            child: Text("الغاء"),
+          ),
+          TextButton(
+            onPressed: () {
+              _addTodo(
+                _titleController.text,
+                _descriptionController.text,
+                _enableNotification,
+                _notificationTime,
+              );
+              Navigator.pop(context);
+            },
+            child: Text("إضافة"),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _addTodo(String title, String description, bool enableNotification, TimeOfDay notificationTime) {
+    if (title.isNotEmpty) {
+      final task = Todo(
+        title: title,
+        description: description,
+        dateTime: DateTime.now(),
+        enableNotification: enableNotification,
+        notificationTime: notificationTime,
+      );
+      todoBox.add(task);
+
+      if (enableNotification) {
+        scheduleTaskNotification(task);
+      }
+    }
+  }
+
+  Future<void> scheduleTaskNotification(Todo task) async {
+    final scheduledNotificationDateTime = DateTime(
+      task.dateTime.year,
+      task.dateTime.month,
+      task.dateTime.day,
+      task.notificationTime.hour,
+      task.notificationTime.minute,
+    );
+
+    const AndroidNotificationDetails androidPlatformChannelSpecifics =
+        AndroidNotificationDetails(
+      'your_channel_id',
+      'your_channel_name',
+      'your_channel_description',
+      importance: Importance.max,
+      priority: Priority.high,
+      showWhen: false,
+    );
+    const NotificationDetails platformChannelSpecifics =
+        NotificationDetails(android: androidPlatformChannelSpecifics);
+    await flutterLocalNotificationsPlugin.schedule(
+      task.hashCode,
+      'Task Reminder',
+      'It\'s time for your task: ${task.title}',
+      scheduledNotificationDateTime,
+      platformChannelSpecifics,
+    );
+  }
+}
+```
+
+### Explanation:
+
+- **Notification Toggle**: A `Switch` widget is used to enable or disable notifications for the task.
+- **Time Picker**: An `ElevatedButton` is used to open a `TimePicker` dialog, allowing the user to select the notification time.
+- **Task Addition**: The `_addTodo` method now accepts additional parameters for notification preferences and schedules a notification if enabled.
+- **Notification Scheduling**: The `scheduleTaskNotification` method schedules a notification at the specified time.
+
+This setup allows users to choose whether they want to be notified about a task and at what time, providing a more personalized experience.
+
